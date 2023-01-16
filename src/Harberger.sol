@@ -5,8 +5,12 @@ import {IERC4907} from "./IERC4907.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
 import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {Context} from "@openzeppelin/contracts/utils/Context.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
-contract Harberger is IERC721Metadata {
+contract Harberger is IERC721Metadata, Context {
+    using Address for address;
     using Counters for Counters.Counter;
 
     // Token name
@@ -90,45 +94,133 @@ contract Harberger is IERC721Metadata {
         return owner;
     }
 
-    function safeTransferFrom(
-        address,
-        address,
-        uint256,
-        bytes calldata
-    ) external pure {
-        revert("Not Implemented");
-    }
-
-    function safeTransferFrom(
-        address,
-        address,
-        uint256
-    ) external pure {
-        revert("Not Implemented");
-    }
-
+    /**
+     * @dev See {IERC721-transferFrom}.
+     */
     function transferFrom(
-        address,
-        address,
-        uint256
-    ) external pure {
-        revert("Not Implemented");
+        address from,
+        address to,
+        uint256 tokenId
+    ) public virtual override {
+        //solhint-disable-next-line max-line-length
+        require(
+            _isApprovedOrOwner(_msgSender(), tokenId),
+            "ERC721: caller is not token owner or approved"
+        );
+
+        _transfer(from, to, tokenId);
     }
 
-    function approve(address, uint256) external pure {
-        revert("Not Implemented");
+    /**
+     * @dev See {IERC721-safeTransferFrom}.
+     */
+    function safeTransferFrom(
+        address from,
+        address to,
+        uint256 tokenId
+    ) public virtual override {
+        safeTransferFrom(from, to, tokenId, "");
     }
 
-    function setApprovalForAll(address, bool) external pure {
-        revert("Not Implemented");
+    /**
+     * @dev See {IERC721-safeTransferFrom}.
+     */
+    function safeTransferFrom(
+        address from,
+        address to,
+        uint256 tokenId,
+        bytes memory data
+    ) public virtual override {
+        require(
+            _isApprovedOrOwner(_msgSender(), tokenId),
+            "ERC721: caller is not token owner or approved"
+        );
+        _safeTransfer(from, to, tokenId, data);
     }
 
-    function getApproved(uint256) external pure returns (address) {
-        revert("Not Implemented");
+    /**
+     * @dev Safely transfers `tokenId` token from `from` to `to`, checking first that contract recipients
+     * are aware of the ERC721 protocol to prevent tokens from being forever locked.
+     *
+     * `data` is additional data, it has no specified format and it is sent in call to `to`.
+     *
+     * This internal function is equivalent to {safeTransferFrom}, and can be used to e.g.
+     * implement alternative mechanisms to perform token transfer, such as signature-based.
+     *
+     * Requirements:
+     *
+     * - `from` cannot be the zero address.
+     * - `to` cannot be the zero address.
+     * - `tokenId` token must exist and be owned by `from`.
+     * - If `to` refers to a smart contract, it must implement {IERC721Receiver-onERC721Received}, which is called upon a safe transfer.
+     *
+     * Emits a {Transfer} event.
+     */
+    function _safeTransfer(
+        address from,
+        address to,
+        uint256 tokenId,
+        bytes memory data
+    ) internal virtual {
+        _transfer(from, to, tokenId);
+        require(
+            _checkOnERC721Received(from, to, tokenId, data),
+            "ERC721: transfer to non ERC721Receiver implementer"
+        );
     }
 
-    function isApprovedForAll(address, address) external pure returns (bool) {
-        revert("Not Implemented");
+    /**
+     * @dev See {IERC721-approve}.
+     */
+    function approve(address to, uint256 tokenId) public virtual override {
+        address owner = ownerOf(tokenId);
+        require(to != owner, "ERC721: approval to current owner");
+
+        require(
+            _msgSender() == owner || isApprovedForAll(owner, _msgSender()),
+            "ERC721: approve caller is not token owner or approved for all"
+        );
+
+        _approve(to, tokenId);
+    }
+
+    /**
+     * @dev See {IERC721-getApproved}.
+     */
+    function getApproved(uint256 tokenId)
+        public
+        view
+        virtual
+        override
+        returns (address)
+    {
+        require(_exists(tokenId));
+
+        return _tokenApprovals[tokenId];
+    }
+
+    /**
+     * @dev See {IERC721-setApprovalForAll}.
+     */
+    function setApprovalForAll(address operator, bool approved)
+        public
+        virtual
+        override
+    {
+        _setApprovalForAll(_msgSender(), operator, approved);
+    }
+
+    /**
+     * @dev See {IERC721-isApprovedForAll}.
+     */
+    function isApprovedForAll(address owner, address operator)
+        public
+        view
+        virtual
+        override
+        returns (bool)
+    {
+        return _operatorApprovals[owner][operator];
     }
 
     function supportsInterface(bytes4 interfaceId)
@@ -209,8 +301,70 @@ contract Harberger is IERC721Metadata {
         emit Transfer(address(0), to, tokenId);
     }
 
+    /**
+     * @dev Internal function to invoke {IERC721Receiver-onERC721Received} on a target address.
+     * The call is not executed if the target address is not a contract.
+     *
+     * @param from address representing the previous owner of the given token ID
+     * @param to target address that will receive the tokens
+     * @param tokenId uint256 ID of the token to be transferred
+     * @param data bytes optional data to send along with the call
+     * @return bool whether the call correctly returned the expected magic value
+     */
+    function _checkOnERC721Received(
+        address from,
+        address to,
+        uint256 tokenId,
+        bytes memory data
+    ) private returns (bool) {
+        if (to.isContract()) {
+            try
+                IERC721Receiver(to).onERC721Received(
+                    _msgSender(),
+                    from,
+                    tokenId,
+                    data
+                )
+            returns (bytes4 retval) {
+                return retval == IERC721Receiver.onERC721Received.selector;
+            } catch (bytes memory reason) {
+                if (reason.length == 0) {
+                    revert(
+                        "ERC721: transfer to non ERC721Receiver implementer"
+                    );
+                } else {
+                    /// @solidity memory-safe-assembly
+                    assembly {
+                        revert(add(32, reason), mload(reason))
+                    }
+                }
+            }
+        } else {
+            return true;
+        }
+    }
+
     function _exists(uint256 tokenId) internal view virtual returns (bool) {
         return _ownerOf(tokenId) != address(0);
+    }
+
+    /**
+     * @dev Returns whether `spender` is allowed to manage `tokenId`.
+     *
+     * Requirements:
+     *
+     * - `tokenId` must exist.
+     */
+    function _isApprovedOrOwner(address spender, uint256 tokenId)
+        internal
+        view
+        virtual
+        returns (bool)
+    {
+        address owner = ownerOf(tokenId);
+        return (spender == owner ||
+            isApprovedForAll(owner, spender) ||
+            getApproved(tokenId) == spender);
     }
 
     function _ownerOf(uint256 tokenId) internal view virtual returns (address) {
